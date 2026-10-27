@@ -7,7 +7,7 @@ A focused working slice toward the requested 100-app library. Starter providers:
 
 ## Requirements
 - Node.js 18+
-- Optional live research keys: `OPENAI_API_KEY` and `TAVILY_API_KEY`
+- Optional live research keys: `GEMINI_API_KEY` and `TAVILY_API_KEY`
 
 ## Run locally
 ```bash
@@ -24,7 +24,7 @@ npm start
 ```
 
 ## Live research agent
-Set `OPENAI_API_KEY`, `TAVILY_API_KEY`, and optionally `PORT=3001` in the server environment. Never commit `.env` or expose keys to browser code. Without research keys, unknown apps must be shown as unresearched drafts, not as verified guides. The agent's web research is not equivalent to completing a provider-console setup.
+Set `GEMINI_API_KEY`, `TAVILY_API_KEY`, and optionally `PORT=3001` in the server environment. Never commit `.env` or expose keys to browser code. Without research keys, unknown apps must be shown as unresearched drafts, not as verified guides. The agent's web research is not equivalent to completing a provider-console setup.
 
 ## Decisions and evidence
 - Check Composio managed OAuth support before assuming developers must register their own provider app.
@@ -42,7 +42,7 @@ Use a Node.js host that supports Express. Run `npm run build`, set research keys
 ## Deploy to Render
 1. Open [Render](https://render.com/) and choose **New → Blueprint**.
 2. Connect this repository and select the branch containing `render.yaml`.
-3. In the service environment settings, add `OPENAI_API_KEY` and `TAVILY_API_KEY` as secret values. Keep them server-side; never add them to Vite/client variables.
+3. In the service environment settings, add `GEMINI_API_KEY` and `TAVILY_API_KEY` as secret values. Keep them server-side; never add them to Vite/client variables.
 4. Deploy and confirm `/api/health` responds. Then test one known guide and one unfamiliar app.
 
 The Render blueprint uses the free web-service plan when available. Free services may sleep and their local filesystem is ephemeral, so generated guides saved to JSON may not persist across restarts/redeploys. For a production service, use durable database storage, rate limiting, input/output validation, source freshness checks, SSRF protection, and a security review. The AI research flow is not provider-console automation and does not complete verification or approval for the user.
