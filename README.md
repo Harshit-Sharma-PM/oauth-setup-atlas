@@ -38,3 +38,11 @@ The seed catalogue is not 100 completed guides. Provider requirements can change
 
 ## Deployment
 Use a Node.js host that supports Express. Run `npm run build`, set research keys as server-side secrets, and run `npm start`. Test live guide generation with valid keys before presenting it as operational.
+
+## Deploy to Render
+1. Open [Render](https://render.com/) and choose **New → Blueprint**.
+2. Connect this repository and select the branch containing `render.yaml`.
+3. In the service environment settings, add `OPENAI_API_KEY` and `TAVILY_API_KEY` as secret values. Keep them server-side; never add them to Vite/client variables.
+4. Deploy and confirm `/api/health` responds. Then test one known guide and one unfamiliar app.
+
+The Render blueprint uses the free web-service plan when available. Free services may sleep and their local filesystem is ephemeral, so generated guides saved to JSON may not persist across restarts/redeploys. For a production service, use durable database storage, rate limiting, input/output validation, source freshness checks, SSRF protection, and a security review. The AI research flow is not provider-console automation and does not complete verification or approval for the user.
