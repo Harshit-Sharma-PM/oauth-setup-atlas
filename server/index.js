@@ -40,7 +40,7 @@ app.post("/api/research",async(req,res)=>{
     ]});
     const data=JSON.parse(completion.choices[0]?.message?.content||"{}");
     const slug=(String(data.name||appName).toLowerCase().replace(/[^a-z0-9]+/g,"-").replace(/^-|-$/g,"").slice(0,60)||"provider")+"-"+Date.now().toString(36);
-    const guide={...data,slug,name:data.name||appName,sources:(data.sources||[]).map(s=>({...s})),status:"AI-generated · verify before use",researchPerformed:true,rawEvidence:sources};
+    const guide={...data,slug,name:data.name||appName,sources:sources.map(s=>({title:s.title||s.url,url:s.url,why:"Search result retrieved during this investigation; verify the linked page supports the specific claim."})),status:"AI-generated · verify before use",researchPerformed:true,rawEvidence:sources};
     const all=await readGenerated();all.unshift(guide);await saveGenerated(all.slice(0,100));
     res.json({guide,researchPerformed:true});
   }catch(e){res.status(502).json({error:"Research could not be completed: "+e.message,details:"Check API keys, provider limits, and try again."});}
