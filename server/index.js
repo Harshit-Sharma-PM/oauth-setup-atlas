@@ -62,21 +62,32 @@ app.post("/api/research",async(req,res)=>{
     const searchResp=await fetchWithRetry("https://api.tavily.com/search",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({api_key:process.env.TAVILY_API_KEY,query:appName+" official developer documentation authentication OAuth authorization code access token app registration permissions verification",search_depth:"advanced",max_results:7,include_answer:false})},"Tavily web search",25000);
     if(!searchResp.ok){const detail=(await searchResp.text()).slice(0,500);throw new Error("Web search provider returned "+searchResp.status+": "+detail);}
     const searchData=await searchResp.json();
-    const sources=(searchData.results||[]).map(x=>({title:x.title,url:x.url,content:(x.content||"").slice(0,1800)}));
-    if(!sources.length)throw new Error("No useful search results found. Try the provider's official name or documentation URL.");
+    let sources=(searchData.results||[]).map(x=>({title:x.title,url:x.url,content:(x.content||"").slice(0,1800)}));
     const normalizedProvider=appName.toLowerCase().replace(/[^a-z0-9]+/g," ").trim();
+    // Search engines can return similarly named products (e.g. Kiteworks/Buildkite
+    // for Zerodha Kite Connect). Remove known collisions and duplicate URLs before
+    // using results as evidence for this specific provider.
+    if(/(^|\\s)(kite|zerodha)(\\s|$)/i.test(normalizedProvider)){
+      sources=sources.filter(source=>{try{
+        const host=new URL(source.url).hostname.toLowerCase();
+        return !/(^|\\.)kiteworks\\.com$|(^|\\.)buildkite\\.com$/.test(host);
+      }catch{return false;}});
+    }
+    const seenSourceUrls=new Set();
+    sources=sources.filter(source=>{const key=String(source.url||"").replace(/#.*$/,"").replace(/\\/$/,"").toLowerCase();if(!key||seenSourceUrls.has(key))return false;seenSourceUrls.add(key);return true;});
+    if(!sources.length)throw new Error("No relevant search results found. Try the provider's official name or documentation URL.");
     // Match complete hostname labels, not arbitrary substrings: "kite" must not
     // classify kiteworks.com or buildkite.com as official Kite Connect sources.
     const officialHostFor=(source)=>{try{
       const host=new URL(source.url).hostname.toLowerCase().replace(/\\.$/,"");
       const labels=host.split(".").filter(Boolean);
       const aliases={
-        kite:["zerodha.com","kite.trade"],
-        zerodha:["zerodha.com","kite.trade"],
         whatsapp:["facebook.com","whatsapp.com","meta.com"],
         meta:["facebook.com","whatsapp.com","meta.com"]
       };
       const aliasDomains=aliases[normalizedProvider]||[];
+      if(/(^|\\s)(kite|zerodha)(\\s|$)/i.test(normalizedProvider)&&
+        ["zerodha.com","kite.trade"].some(domain=>host===domain||host.endsWith("."+domain)))return true;
       if(aliasDomains.some(domain=>host===domain||host.endsWith("."+domain)))return true;
       const tokens=normalizedProvider.split(" ").filter(t=>t.length>2&&!["business","platform","cloud","api","oauth","integration","connect"].includes(t));
       return tokens.some(token=>labels.includes(token));
