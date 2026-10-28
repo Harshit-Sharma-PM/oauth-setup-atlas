@@ -75,7 +75,11 @@ app.post("/api/research",async(req,res)=>{
     }
     const seenSourceUrls=new Set();
     sources=sources.filter(source=>{const key=String(source.url||"").replace(/#.*$/,"").replace(/\/$/,"").toLowerCase();if(!key||seenSourceUrls.has(key))return false;seenSourceUrls.add(key);return true;});
-    if(!sources.length)throw new Error("No relevant search results found. Try the provider's official name or documentation URL.");
+    const genericTerms=new Set(["app","api","oauth","auth","authentication","integration","connect","platform","cloud","developer","developers","official","docs","documentation","website","online","service","services","login","setup","guide","software"]);
+    const providerTokens=normalizedProvider.split(/\s+/).filter(token=>token.length>=3&&!genericTerms.has(token));
+    const inputHost=(()=>{try{return new URL(/^https?:\/\//i.test(appName)?appName:"https://"+appName).hostname.toLowerCase().replace(/^www\./,"");}catch{return "";}})();
+    sources=sources.filter(source=>{try{const url=new URL(source.url);const host=url.hostname.toLowerCase().replace(/^www\./,"");if(inputHost&&(host===inputHost||host.endsWith("."+inputHost)))return true;const searchable=[source.title,host,url.pathname].join(" ").toLowerCase().replace(/[^a-z0-9]+/g," ").split(/\s+/);return providerTokens.length>0&&providerTokens.some(token=>searchable.includes(token));}catch{return false;}});
+    if(!sources.length){return res.json({researchPerformed:true,notFound:true,message:"We could not identify this app from relevant search results. Check the spelling or enter the app official website. No setup guide was generated because the available sources did not match the requested app.",query:appName,sources:[]});}
     // Match complete hostname labels, not arbitrary substrings: "kite" must not
     // classify kiteworks.com or buildkite.com as official Kite Connect sources.
     const officialHostFor=(source)=>{try{
