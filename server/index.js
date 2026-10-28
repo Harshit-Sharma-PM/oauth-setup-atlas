@@ -74,7 +74,7 @@ app.post("/api/research",async(req,res)=>{
       }catch{return false;}});
     }
     const seenSourceUrls=new Set();
-    sources=sources.filter(source=>{const key=String(source.url||"").replace(/#.*$/,"").replace(/\//$/,"").toLowerCase();if(!key||seenSourceUrls.has(key))return false;seenSourceUrls.add(key);return true;});
+    sources=sources.filter(source=>{const key=String(source.url||"").replace(/#.*$/,"").replace(/\/$/,"").toLowerCase();if(!key||seenSourceUrls.has(key))return false;seenSourceUrls.add(key);return true;});
     if(!sources.length)throw new Error("No relevant search results found. Try the provider's official name or documentation URL.");
     // Match complete hostname labels, not arbitrary substrings: "kite" must not
     // classify kiteworks.com or buildkite.com as official Kite Connect sources.
