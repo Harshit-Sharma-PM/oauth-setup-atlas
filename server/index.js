@@ -113,7 +113,7 @@ app.post("/api/research",async(req,res)=>{
     const officialOAuthEvidence=/oauth(?:[- ]style)?|authorization code|redirect uri|callback url|authorize endpoint|openid connect/i.test(officialEvidenceText);
     // Preserve a documented request-token/login flow even when it is not classified
     // as standard OAuth 2.0, rather than replacing useful steps with generic advice.
-    const officialAuthFlowEvidence=/request[_ -]?token|checksum|token exchange|login flow|session\\/token|api[_ -]?secret/i.test(officialEvidenceText);
+    const officialAuthFlowEvidence=/request[_ -]?token|checksum|token exchange|login flow|session\/token|api[_ -]?secret/i.test(officialEvidenceText);
     const reportedSupport=["confirmed","not_found","unclear"].includes(data.oauthSupport)?data.oauthSupport:"unclear";
     const oauthSupport=reportedSupport==="confirmed"&&!officialOAuthEvidence?"unclear":reportedSupport;
     const preserveDocumentedAuthFlow=oauthSupport!=="confirmed"&&officialAuthFlowEvidence&&Array.isArray(data.authMethods)&&data.authMethods.length>0;
