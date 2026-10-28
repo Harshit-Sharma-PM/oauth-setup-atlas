@@ -67,26 +67,26 @@ app.post("/api/research",async(req,res)=>{
     // Search engines can return similarly named products (e.g. Kiteworks/Buildkite
     // for Zerodha Kite Connect). Remove known collisions and duplicate URLs before
     // using results as evidence for this specific provider.
-    if(/(^|\\s)(kite|zerodha)(\\s|$)/i.test(normalizedProvider)){
+    if(/(^|\s)(kite|zerodha)(\s|$)/i.test(normalizedProvider)){
       sources=sources.filter(source=>{try{
         const host=new URL(source.url).hostname.toLowerCase();
-        return !/(^|\\.)kiteworks\\.com$|(^|\\.)buildkite\\.com$/.test(host);
+        return !/(^|\.)kiteworks\.com$|(^|\.)buildkite\.com$/.test(host);
       }catch{return false;}});
     }
     const seenSourceUrls=new Set();
-    sources=sources.filter(source=>{const key=String(source.url||"").replace(/#.*$/,"").replace(/\\/$/,"").toLowerCase();if(!key||seenSourceUrls.has(key))return false;seenSourceUrls.add(key);return true;});
+    sources=sources.filter(source=>{const key=String(source.url||"").replace(/#.*$/,"").replace(/\//$/,"").toLowerCase();if(!key||seenSourceUrls.has(key))return false;seenSourceUrls.add(key);return true;});
     if(!sources.length)throw new Error("No relevant search results found. Try the provider's official name or documentation URL.");
     // Match complete hostname labels, not arbitrary substrings: "kite" must not
     // classify kiteworks.com or buildkite.com as official Kite Connect sources.
     const officialHostFor=(source)=>{try{
-      const host=new URL(source.url).hostname.toLowerCase().replace(/\\.$/,"");
+      const host=new URL(source.url).hostname.toLowerCase().replace(/\.$/,"");
       const labels=host.split(".").filter(Boolean);
       const aliases={
         whatsapp:["facebook.com","whatsapp.com","meta.com"],
         meta:["facebook.com","whatsapp.com","meta.com"]
       };
       const aliasDomains=aliases[normalizedProvider]||[];
-      if(/(^|\\s)(kite|zerodha)(\\s|$)/i.test(normalizedProvider)&&
+      if(/(^|\s)(kite|zerodha)(\s|$)/i.test(normalizedProvider)&&
         ["zerodha.com","kite.trade"].some(domain=>host===domain||host.endsWith("."+domain)))return true;
       if(aliasDomains.some(domain=>host===domain||host.endsWith("."+domain)))return true;
       const tokens=normalizedProvider.split(" ").filter(t=>t.length>2&&!["business","platform","cloud","api","oauth","integration","connect"].includes(t));
