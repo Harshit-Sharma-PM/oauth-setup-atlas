@@ -5,7 +5,7 @@ import"./styles.css";
 const IconMark=({children})=><span className="icon-mark">{children}</span>;
 function guideUrl(g){
  const compact={...g};delete compact.rawEvidence;
- const encoded=btoa(encodeURIComponent(JSON.stringify(compact))).replace(/\\+/g,"-").replace(/\\//g,"_").replace(/=+$/,"");
+ const encoded=btoa(encodeURIComponent(JSON.stringify(compact))).replace(/\+/g,"-").replace(/\//g,"_").replace(/=+$/,"");
  return "/guide/"+encodeURIComponent(g.slug)+"#data="+encoded;
 }
 function guideFromHash(){
