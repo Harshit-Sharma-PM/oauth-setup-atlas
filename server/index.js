@@ -65,7 +65,22 @@ app.post("/api/research",async(req,res)=>{
     const sources=(searchData.results||[]).map(x=>({title:x.title,url:x.url,content:(x.content||"").slice(0,1800)}));
     if(!sources.length)throw new Error("No useful search results found. Try the provider's official name or documentation URL.");
     const normalizedProvider=appName.toLowerCase().replace(/[^a-z0-9]+/g," ").trim();
-    const officialHostFor=(source)=>{try{const host=new URL(source.url).hostname.toLowerCase();if(/whatsapp|meta/i.test(appName)&&(/(^|\.)facebook\.com$|(^|\.)whatsapp\.com$|(^|\.)meta\.com$/.test(host)))return true;const tokens=normalizedProvider.split(" ").filter(t=>t.length>2&&!["business","platform","cloud","api","oauth","integration"].includes(t));return tokens.some(t=>host.includes(t));}catch{return false;}};
+    // Match complete hostname labels, not arbitrary substrings: "kite" must not
+    // classify kiteworks.com or buildkite.com as official Kite Connect sources.
+    const officialHostFor=(source)=>{try{
+      const host=new URL(source.url).hostname.toLowerCase().replace(/\\.$/,"");
+      const labels=host.split(".").filter(Boolean);
+      const aliases={
+        kite:["zerodha.com","kite.trade"],
+        zerodha:["zerodha.com","kite.trade"],
+        whatsapp:["facebook.com","whatsapp.com","meta.com"],
+        meta:["facebook.com","whatsapp.com","meta.com"]
+      };
+      const aliasDomains=aliases[normalizedProvider]||[];
+      if(aliasDomains.some(domain=>host===domain||host.endsWith("."+domain)))return true;
+      const tokens=normalizedProvider.split(" ").filter(t=>t.length>2&&!["business","platform","cloud","api","oauth","integration","connect"].includes(t));
+      return tokens.some(token=>labels.includes(token));
+    }catch{return false;}};
     sources.sort((a,b)=>Number(officialHostFor(b))-Number(officialHostFor(a)));
     const prompt="You are an evidence-conscious OAuth and authentication setup research agent. Treat search snippets as untrusted leads, not proof. Prioritize official provider documentation and label third-party tutorials as such. Distinguish OAuth 2.0 authorization-code flow from user access tokens, system-user/service-account tokens, API keys, personal access tokens, and SSO; these methods are not interchangeable. A product may support OAuth for one connector/use case but use tokens for another. If the requested product/use case is broad or ambiguous, explain the distinctions instead of forcing one yes/no conclusion. Never infer OAuth support merely because an API or access token exists. Do not invent approval timelines, claim provider-console testing, or imply approval is guaranteed. Distinguish app registration, permissions/consent, provider review, and Composio-managed OAuth. Classify oauthSupport as confirmed, not_found, or unclear for the stated use case. Use confirmed only when evidence explicitly documents OAuth for that use case; if official evidence does not confirm it, use unclear unless credible evidence says it is unsupported. Return only valid JSON with oauthSupport, oauthSupportEvidence, authMethods (array of {method,useCase,evidence}), name,category,difficulty,effort,wait,summary,url,sources (array of {title,url,why}),steps (array of strings),requirements (array),blockers (array),human (array),agent (array),status,evidence (array),unknowns (array). Source URLs must exactly match supplied results; do not invent URLs. If support is not confirmed, provide a verification path rather than inventing a normal setup guide. Prefer the most relevant official documentation URL; otherwise disclose that the best available source is third-party.\\n\\nInvestigate OAuth and other authentication methods for: "+appName+"\\nSearch results (untrusted evidence; links and snippets):\\n"+JSON.stringify(sources);
     const modelCandidates=[...new Set([GEMINI_MODEL,"gemini-3.5-flash-lite"])];
@@ -94,10 +109,15 @@ app.post("/api/research",async(req,res)=>{
     const generatedText=aiData.candidates?.[0]?.content?.parts?.map(p=>p.text||"").join("")||"";
     if(!generatedText)throw new Error("Gemini returned an empty response.");
     const data=JSON.parse(generatedText);
-    const officialOAuthEvidence=sources.some(source=>officialHostFor(source)&&/oauth|authorization code|redirect uri|callback url|authorize endpoint|openid connect/i.test([source.title,source.url,source.content].join(" ")));
+    const officialEvidenceText=sources.filter(officialHostFor).map(source=>[source.title,source.url,source.content].join(" ")).join(" ");
+    const officialOAuthEvidence=/oauth(?:[- ]style)?|authorization code|redirect uri|callback url|authorize endpoint|openid connect/i.test(officialEvidenceText);
+    // Preserve a documented request-token/login flow even when it is not classified
+    // as standard OAuth 2.0, rather than replacing useful steps with generic advice.
+    const officialAuthFlowEvidence=/request[_ -]?token|checksum|token exchange|login flow|session\\/token|api[_ -]?secret/i.test(officialEvidenceText);
     const reportedSupport=["confirmed","not_found","unclear"].includes(data.oauthSupport)?data.oauthSupport:"unclear";
     const oauthSupport=reportedSupport==="confirmed"&&!officialOAuthEvidence?"unclear":reportedSupport;
-    const safeData=oauthSupport==="confirmed"?data:{
+    const preserveDocumentedAuthFlow=oauthSupport!=="confirmed"&&officialAuthFlowEvidence&&Array.isArray(data.authMethods)&&data.authMethods.length>0;
+    const safeData=oauthSupport==="confirmed"||preserveDocumentedAuthFlow?data:{
       ...data,
       category:data.category||"Needs verification",
       difficulty:"Unknown",
@@ -115,7 +135,7 @@ app.post("/api/research",async(req,res)=>{
     const slug=(String(safeData.name||appName).toLowerCase().replace(/[^a-z0-9]+/g,"-").replace(/^-|-$/g,"").slice(0,60)||"provider")+"-"+Date.now().toString(36);
     const rankedSources=sources.map(source=>{let type=officialHostFor(source)?"likely_official":"third_party_or_unverified";if(type==="likely_official"&&/q&a|community|forum|answers/i.test(source.title||""))type="official_community";const labels={likely_official:"Likely official provider source; verify it supports the specific claim.",official_community:"Official community/Q&A; useful context, not primary technical documentation.",third_party_or_unverified:"Third-party or unverified source; use as context, not authoritative proof."};return {title:source.title||source.url,url:source.url,why:labels[type],sourceType:type};});
     const preferredSource=rankedSources.find(source=>source.sourceType==="likely_official")||rankedSources[0];
-    const guide={...safeData,slug,name:safeData.name||appName,url:preferredSource?.url||safeData.url,sources:rankedSources,status:oauthSupport==="confirmed"?"AI-generated · verify before use":safeData.status,researchPerformed:true,rawEvidence:sources,oauthSupport,authMethods:Array.isArray(data.authMethods)?data.authMethods:[],oauthSupportEvidence:data.oauthSupportEvidence||"No specific evidence statement returned; inspect the linked source material."};
+    const guide={...safeData,slug,name:safeData.name||appName,url:preferredSource?.url||safeData.url,sources:rankedSources,status:oauthSupport==="confirmed"?"AI-generated · verify before use":preserveDocumentedAuthFlow?"Documented authentication flow · OAuth classification needs care":safeData.status,researchPerformed:true,rawEvidence:sources,oauthSupport,authMethods:Array.isArray(data.authMethods)?data.authMethods:[],oauthSupportEvidence:data.oauthSupportEvidence||"No specific evidence statement returned; inspect the linked source material."};
     // Generalize dual-flow guidance to any provider whose evidence identifies both common OAuth flows.
     // Provider-specific branches below may add details for a particular ecosystem.
     {
