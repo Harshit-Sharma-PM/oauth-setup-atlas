@@ -17,6 +17,30 @@ app.use(express.json({ limit: "1mb" }));
 app.use(express.static(path.join(__dirname, "..", "dist")));
 async function readGenerated(){ try{return JSON.parse(await fs.readFile(dataFile,"utf8"));}catch{return [];} }
 async function saveGenerated(list){await fs.mkdir(dataDir,{recursive:true});await fs.writeFile(dataFile,JSON.stringify(list,null,2));}
+async function fetchWithRetry(url,options={},label="External service",timeoutMs=45000){
+  let lastError;
+  for(let attempt=0;attempt<2;attempt++){
+    const controller=new AbortController();
+    const timer=setTimeout(()=>controller.abort(),timeoutMs);
+    try{
+      const response=await fetch(url,{...options,signal:controller.signal});
+      if((response.status===429||response.status>=500)&&attempt===0){
+        await response.text().catch(()=>{});
+        await new Promise(resolve=>setTimeout(resolve,900));
+        continue;
+      }
+      return response;
+    }catch(error){
+      lastError=error;
+      if(attempt===0){await new Promise(resolve=>setTimeout(resolve,900));continue;}
+      if(error?.name==="AbortError"||error?.name==="TimeoutError"){
+        throw new Error(label+" timed out after "+Math.round(timeoutMs/1000)+" seconds. Please retry.");
+      }
+      throw new Error(label+" connection failed after a retry. Please try again; this can be a temporary network or provider issue.");
+    }finally{clearTimeout(timer);}
+  }
+  throw lastError||new Error(label+" request failed.");
+}
 app.get("/api/health",(_req,res)=>res.json({ok:true,researchConfigured:Boolean(process.env.GEMINI_API_KEY&&process.env.TAVILY_API_KEY),geminiModel:GEMINI_MODEL}));
 app.get("/api/guides",async(_req,res)=>res.json([...seedGuides,...await readGenerated()]));
 app.get("/api/guides/:slug",async(req,res)=>{const all=[...seedGuides,...await readGenerated()];const guide=all.find(g=>g.slug===req.params.slug);if(!guide)return res.status(404).json({error:"Guide not found"});res.json(guide);});
@@ -28,13 +52,13 @@ app.post("/api/research",async(req,res)=>{
     return res.status(200).json({guide:{slug:"draft-"+Date.now(),name:appName,category:"Unclassified",difficulty:"Unknown",effort:"Unknown until official setup docs are reviewed",wait:"Unknown — no live research performed",summary:"This is an unresearched draft. Configure GEMINI_API_KEY and TAVILY_API_KEY to investigate this provider.",url:"https://www.google.com/search?q="+encodeURIComponent(appName+" OAuth developer documentation"),sources:[],steps:["Find the provider's official developer documentation.","Confirm whether OAuth is supported and which app-registration model applies.","Identify callback URL, scopes, verification and distribution requirements.","Test the flow in a development account before relying on this guide."],requirements:["Official documentation not yet checked"],blockers:["All provider-specific requirements remain unknown"],human:["Verify provider identity and official docs","Complete all provider-console actions","Confirm requirements before production"],status:"Unresearched draft",evidence:["No search or verification performed because research keys are not configured."]},researchPerformed:false});
   }
   try{
-    const searchResp=await fetch("https://api.tavily.com/search",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({api_key:process.env.TAVILY_API_KEY,query:appName+" official OAuth developer documentation app registration verification scopes",search_depth:"advanced",max_results:7,include_answer:false})});
+    const searchResp=await fetchWithRetry("https://api.tavily.com/search",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({api_key:process.env.TAVILY_API_KEY,query:appName+" official OAuth developer documentation app registration verification scopes",search_depth:"basic",max_results:5,include_answer:false})},"Tavily web search",25000);
     if(!searchResp.ok){const detail=(await searchResp.text()).slice(0,500);throw new Error("Web search provider returned "+searchResp.status+": "+detail);}
     const searchData=await searchResp.json();
     const sources=(searchData.results||[]).map(x=>({title:x.title,url:x.url,content:(x.content||"").slice(0,1800)}));
     if(!sources.length)throw new Error("No useful search results found. Try the provider's official name or documentation URL.");
     const prompt="You are an evidence-conscious OAuth setup research agent. Use only the provided search results for provider-specific claims. Do not invent approval timelines, claim a provider console was tested, or imply approval is guaranteed. Distinguish OAuth registration from marketplace review and from Composio-managed OAuth. Label estimates. First classify oauthSupport as exactly confirmed, not_found, or unclear. Use confirmed ONLY when the retrieved evidence explicitly documents a public OAuth integration or OAuth app-registration path for this exact product. Use not_found when credible evidence indicates no public OAuth support; use unclear when evidence is insufficient or ambiguous. Never infer OAuth support merely because a product has an API. Return only valid JSON with oauthSupport, oauthSupportEvidence, name,category,difficulty,effort,wait,summary,url,sources (array of {title,url,why}),steps (array of strings),requirements (array),blockers (array),human (array),agent (array),status,evidence (array),unknowns (array). If support is not confirmed, do not invent a normal setup guide; describe what must be checked and mark unknown.\\n\\nInvestigate OAuth support and setup for: "+appName+"\\nSearch results (untrusted evidence; links and snippets):\\n"+JSON.stringify(sources);
-    const aiResp=await fetch("https://generativelanguage.googleapis.com/v1beta/models/"+encodeURIComponent(GEMINI_MODEL)+":generateContent?key="+encodeURIComponent(process.env.GEMINI_API_KEY),{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({contents:[{parts:[{text:prompt}]}],generationConfig:{temperature:0.2,responseMimeType:"application/json"}})});
+    const aiResp=await fetchWithRetry("https://generativelanguage.googleapis.com/v1beta/models/"+encodeURIComponent(GEMINI_MODEL)+":generateContent?key="+encodeURIComponent(process.env.GEMINI_API_KEY),{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({contents:[{parts:[{text:prompt}]}],generationConfig:{temperature:0.2,responseMimeType:"application/json"}})},"Gemini guide generation",45000);
     if(!aiResp.ok){const detail=(await aiResp.text()).slice(0,700);throw new Error("Gemini "+GEMINI_MODEL+" returned HTTP "+aiResp.status+": "+detail);}
     const aiData=await aiResp.json();
     const generatedText=aiData.candidates?.[0]?.content?.parts?.map(p=>p.text||"").join("")||"";
@@ -61,7 +85,7 @@ app.post("/api/research",async(req,res)=>{
     const guide={...safeData,slug,name:safeData.name||appName,sources:sources.map(s=>({title:s.title||s.url,url:s.url,why:"Search result retrieved during this investigation; verify the linked page supports the specific claim."})),status:oauthSupport==="confirmed"?"AI-generated · verify before use":safeData.status,researchPerformed:true,rawEvidence:sources};
     const all=await readGenerated();all.unshift(guide);await saveGenerated(all.slice(0,100));
     res.json({guide,researchPerformed:true});
-  }catch(e){res.status(502).json({error:"Research could not be completed: "+e.message,details:"Check API keys, provider limits, and try again."});}
+  }catch(e){const message=String(e?.message||"Unknown research error");res.status(502).json({error:"Research could not be completed: "+message,details:"No guide was saved. Wait a moment and retry; if it continues, check the provider status and API quotas."});}
 });
 app.get("*",(req,res)=>res.sendFile(path.join(__dirname,"..","dist","index.html")));
 app.listen(PORT,()=>console.log("OAuth Setup Atlas API listening on "+PORT));
