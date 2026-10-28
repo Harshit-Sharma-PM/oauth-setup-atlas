@@ -33,15 +33,32 @@ app.post("/api/research",async(req,res)=>{
     const searchData=await searchResp.json();
     const sources=(searchData.results||[]).map(x=>({title:x.title,url:x.url,content:(x.content||"").slice(0,1800)}));
     if(!sources.length)throw new Error("No useful search results found. Try the provider's official name or documentation URL.");
-    const prompt="You are an evidence-conscious OAuth setup research agent. Use only the provided search results for provider-specific claims. Do not invent approval timelines, claim a provider console was tested, or imply approval is guaranteed. Distinguish OAuth registration from marketplace review and from Composio-managed OAuth. Label estimates. Return only valid JSON with name,category,difficulty,effort,wait,summary,url,sources (array of {title,url,why}),steps (array of strings),requirements (array),blockers (array),human (array),agent (array),status,evidence (array),unknowns (array). If evidence is weak, say unknown.\n\nCreate a practical OAuth setup guide for: "+appName+"\nSearch results (untrusted evidence; links and snippets):\n"+JSON.stringify(sources);
+    const prompt="You are an evidence-conscious OAuth setup research agent. Use only the provided search results for provider-specific claims. Do not invent approval timelines, claim a provider console was tested, or imply approval is guaranteed. Distinguish OAuth registration from marketplace review and from Composio-managed OAuth. Label estimates. First classify oauthSupport as exactly confirmed, not_found, or unclear. Use confirmed ONLY when the retrieved evidence explicitly documents a public OAuth integration or OAuth app-registration path for this exact product. Use not_found when credible evidence indicates no public OAuth support; use unclear when evidence is insufficient or ambiguous. Never infer OAuth support merely because a product has an API. Return only valid JSON with oauthSupport, oauthSupportEvidence, name,category,difficulty,effort,wait,summary,url,sources (array of {title,url,why}),steps (array of strings),requirements (array),blockers (array),human (array),agent (array),status,evidence (array),unknowns (array). If support is not confirmed, do not invent a normal setup guide; describe what must be checked and mark unknown.\\n\\nInvestigate OAuth support and setup for: "+appName+"\\nSearch results (untrusted evidence; links and snippets):\\n"+JSON.stringify(sources);
     const aiResp=await fetch("https://generativelanguage.googleapis.com/v1beta/models/"+encodeURIComponent(GEMINI_MODEL)+":generateContent?key="+encodeURIComponent(process.env.GEMINI_API_KEY),{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({contents:[{parts:[{text:prompt}]}],generationConfig:{temperature:0.2,responseMimeType:"application/json"}})});
     if(!aiResp.ok){const detail=(await aiResp.text()).slice(0,700);throw new Error("Gemini "+GEMINI_MODEL+" returned HTTP "+aiResp.status+": "+detail);}
     const aiData=await aiResp.json();
     const generatedText=aiData.candidates?.[0]?.content?.parts?.map(p=>p.text||"").join("")||"";
     if(!generatedText)throw new Error("Gemini returned an empty response.");
     const data=JSON.parse(generatedText);
-    const slug=(String(data.name||appName).toLowerCase().replace(/[^a-z0-9]+/g,"-").replace(/^-|-$/g,"").slice(0,60)||"provider")+"-"+Date.now().toString(36);
-    const guide={...data,slug,name:data.name||appName,sources:sources.map(s=>({title:s.title||s.url,url:s.url,why:"Search result retrieved during this investigation; verify the linked page supports the specific claim."})),status:"AI-generated · verify before use",researchPerformed:true,rawEvidence:sources};
+    const hasOAuthEvidence=sources.some(s=>/oauth|authorization code|redirect uri|callback url|authorize endpoint|openid connect/i.test([s.title,s.url,s.content].join(" ")));
+    const oauthSupport=hasOAuthEvidence?(["confirmed","not_found","unclear"].includes(data.oauthSupport)?data.oauthSupport:"unclear"):"unclear";
+    const safeData=oauthSupport==="confirmed"?data:{
+      ...data,
+      category:data.category||"Needs verification",
+      difficulty:"Unknown",
+      effort:"Unknown — verify OAuth support first",
+      wait:"Unknown — no approval path verified",
+      summary:oauthSupport==="not_found"?"No public OAuth setup path was verified in the retrieved evidence. Do not assume this product supports OAuth; check official documentation or contact the provider.":"OAuth support could not be confirmed from the retrieved evidence. This is a verification report, not a confirmed setup guide.",
+      steps:["Review the linked official developer/API documentation for explicit OAuth or authorization-flow support.","Check whether the product instead uses API tokens, service accounts, SSO, or a managed integration.","If documentation remains unclear, contact the provider before planning an OAuth implementation."],
+      requirements:["Official documentation that explicitly confirms supported authentication methods"],
+      blockers:["No sufficiently clear public evidence of an OAuth setup path"],
+      human:["Verify the product's supported authentication methods with official documentation or the provider","Do not create credentials or build an OAuth flow until support is confirmed"],
+      agent:["Summarize retrieved evidence and identify the unanswered authentication questions"],
+      status:oauthSupport==="not_found"?"No public OAuth path verified":"OAuth support unclear",
+      unknowns:[...(Array.isArray(data.unknowns)?data.unknowns:[]),"Whether this exact product supports public OAuth remains unverified."]
+    };
+    const slug=(String(safeData.name||appName).toLowerCase().replace(/[^a-z0-9]+/g,"-").replace(/^-|-$/g,"").slice(0,60)||"provider")+"-"+Date.now().toString(36);
+    const guide={...safeData,slug,name:safeData.name||appName,sources:sources.map(s=>({title:s.title||s.url,url:s.url,why:"Search result retrieved during this investigation; verify the linked page supports the specific claim."})),status:oauthSupport==="confirmed"?"AI-generated · verify before use":safeData.status,researchPerformed:true,rawEvidence:sources};
     const all=await readGenerated();all.unshift(guide);await saveGenerated(all.slice(0,100));
     res.json({guide,researchPerformed:true});
   }catch(e){res.status(502).json({error:"Research could not be completed: "+e.message,details:"Check API keys, provider limits, and try again."});}
