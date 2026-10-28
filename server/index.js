@@ -58,8 +58,19 @@ app.post("/api/research",async(req,res)=>{
     const sources=(searchData.results||[]).map(x=>({title:x.title,url:x.url,content:(x.content||"").slice(0,1800)}));
     if(!sources.length)throw new Error("No useful search results found. Try the provider's official name or documentation URL.");
     const prompt="You are an evidence-conscious OAuth setup research agent. Use only the provided search results for provider-specific claims. Do not invent approval timelines, claim a provider console was tested, or imply approval is guaranteed. Distinguish OAuth registration from marketplace review and from Composio-managed OAuth. Label estimates. First classify oauthSupport as exactly confirmed, not_found, or unclear. Use confirmed ONLY when the retrieved evidence explicitly documents a public OAuth integration or OAuth app-registration path for this exact product. Use not_found when credible evidence indicates no public OAuth support; use unclear when evidence is insufficient or ambiguous. Never infer OAuth support merely because a product has an API. Return only valid JSON with oauthSupport, oauthSupportEvidence, name,category,difficulty,effort,wait,summary,url,sources (array of {title,url,why}),steps (array of strings),requirements (array),blockers (array),human (array),agent (array),status,evidence (array),unknowns (array). If support is not confirmed, do not invent a normal setup guide; describe what must be checked and mark unknown.\\n\\nInvestigate OAuth support and setup for: "+appName+"\\nSearch results (untrusted evidence; links and snippets):\\n"+JSON.stringify(sources);
-    const aiResp=await fetchWithRetry("https://generativelanguage.googleapis.com/v1beta/models/"+encodeURIComponent(GEMINI_MODEL)+":generateContent?key="+encodeURIComponent(process.env.GEMINI_API_KEY),{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({contents:[{parts:[{text:prompt}]}],generationConfig:{temperature:0.2,responseMimeType:"application/json"}})},"Gemini guide generation",45000);
-    if(!aiResp.ok){const detail=(await aiResp.text()).slice(0,700);throw new Error("Gemini "+GEMINI_MODEL+" returned HTTP "+aiResp.status+": "+detail);}
+    const modelCandidates=[...new Set([GEMINI_MODEL,"gemini-3.5-flash-lite"])];
+    let aiResp=null;
+    let lastModelError="";
+    for(let i=0;i<modelCandidates.length;i++){
+      const model=modelCandidates[i];
+      const response=await fetchWithRetry("https://generativelanguage.googleapis.com/v1beta/models/"+encodeURIComponent(model)+":generateContent?key="+encodeURIComponent(process.env.GEMINI_API_KEY),{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({contents:[{parts:[{text:prompt}]}],generationConfig:{temperature:0.2,responseMimeType:"application/json"}})},"Gemini guide generation",45000);
+      if(response.ok){aiResp=response;break;}
+      const detail=(await response.text()).slice(0,500);
+      lastModelError="Gemini "+model+" returned HTTP "+response.status+": "+detail;
+      if(i<modelCandidates.length-1&&(response.status===429||response.status===500||response.status===502||response.status===503||response.status===504))continue;
+      throw new Error(lastModelError);
+    }
+    if(!aiResp)throw new Error(lastModelError||"All available Gemini models are temporarily unavailable. Please retry.");
     const aiData=await aiResp.json();
     const generatedText=aiData.candidates?.[0]?.content?.parts?.map(p=>p.text||"").join("")||"";
     if(!generatedText)throw new Error("Gemini returned an empty response.");
