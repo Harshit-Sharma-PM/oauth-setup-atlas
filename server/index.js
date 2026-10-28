@@ -116,6 +116,74 @@ app.post("/api/research",async(req,res)=>{
     const rankedSources=sources.map(source=>{let type=officialHostFor(source)?"likely_official":"third_party_or_unverified";if(type==="likely_official"&&/q&a|community|forum|answers/i.test(source.title||""))type="official_community";const labels={likely_official:"Likely official provider source; verify it supports the specific claim.",official_community:"Official community/Q&A; useful context, not primary technical documentation.",third_party_or_unverified:"Third-party or unverified source; use as context, not authoritative proof."};return {title:source.title||source.url,url:source.url,why:labels[type],sourceType:type};});
     const preferredSource=rankedSources.find(source=>source.sourceType==="likely_official")||rankedSources[0];
     const guide={...safeData,slug,name:safeData.name||appName,url:preferredSource?.url||safeData.url,sources:rankedSources,status:oauthSupport==="confirmed"?"AI-generated · verify before use":safeData.status,researchPerformed:true,rawEvidence:sources,oauthSupport,authMethods:Array.isArray(data.authMethods)?data.authMethods:[],oauthSupportEvidence:data.oauthSupportEvidence||"No specific evidence statement returned; inspect the linked source material."};
+    // Make broad WhatsApp searches explicit about the difference between direct Cloud API
+    // credentials and OAuth managed by a specific third-party connector.
+    if(/whatsapp/i.test(appName)){
+      const methods=guide.authMethods||[];
+      const hasOAuth=methods.some(m=>/oauth/i.test(String(m.method||"")));
+      const hasSystemToken=methods.some(m=>/system user|access token/i.test(String(m.method||"")));
+      if(hasOAuth&&hasSystemToken&&oauthSupport!=="confirmed"){
+        guide.summary="Authentication depends on the integration surface. Direct WhatsApp Cloud API access commonly uses Meta-issued access tokens; some third-party connectors offer an OAuth authorization flow. Confirm the exact connector and flow before treating OAuth as supported for your use case.";
+        guide.steps=[
+          "Choose the integration surface first: direct Meta WhatsApp Cloud API, or a named third-party connector/platform.",
+          "For direct Cloud API access, verify Meta's current System User / business access-token guidance and required permissions; do not assume this is OAuth.",
+          "For a connector, open that connector's official WhatsApp integration docs and confirm it explicitly supports OAuth 2.0 Authorization Code for this connection.",
+          "Confirm the required Meta business assets, app/phone-number permissions, webhook setup, and any embedded-signup or business verification requirements for the selected path.",
+          "Only after the path is confirmed, test with a development business/phone number and store credentials securely."
+        ];
+        guide.requirements=[
+          "Named integration surface (direct Cloud API or a specific connector)",
+          "Meta business/app access and permissions appropriate to the selected path",
+          "For connector OAuth only: official documentation confirming the OAuth flow and callback requirements"
+        ];
+        guide.blockers=[
+          "Direct API access tokens and connector-managed OAuth are different authentication paths",
+          "Required business assets, permissions, or business verification may depend on the selected integration",
+          "OAuth support for the specific connector/use case is not confirmed by the current evidence"
+        ];
+        guide.human=[
+          "Select and verify the exact integration surface in official documentation",
+          "Complete Meta business/app/phone-number configuration and any required verification",
+          "Approve the connector connection or securely provision direct API credentials, depending on the selected path"
+        ];
+        guide.unknowns=[...(Array.isArray(guide.unknowns)?guide.unknowns:[]),"Which exact WhatsApp integration surface the user intends to connect."];
+      }
+    }
+    // If Microsoft results identify both OAuth flows, provide two distinct paths instead
+    // of mixing authorization-code prerequisites with client-credentials steps.
+    if(/microsoft|entra|microsoft graph/i.test(appName)){
+      const methods=guide.authMethods||[];
+      const hasAuthCode=methods.some(m=>/authorization code/i.test(String(m.method||"")));
+      const hasClientCredentials=methods.some(m=>/client credentials/i.test(String(m.method||"")));
+      if(hasAuthCode&&hasClientCredentials&&oauthSupport==="confirmed"){
+        guide.summary="Microsoft identity platform supports different OAuth flows for different access patterns. Use Authorization Code for user-delegated access; use Client Credentials for app-only server-to-server access. Choose the flow based on the API permissions and whether a signed-in user is involved.";
+        guide.steps=[
+          "Choose one flow for the target API: Authorization Code for user-delegated access, or Client Credentials for app-only server-to-server access.",
+          "Register the application in Microsoft Entra ID and configure supported account types for the intended tenant/audience.",
+          "For Authorization Code: configure the exact redirect URI, request delegated permissions, send the user to the /authorize endpoint, handle the callback, and exchange the code at /token.",
+          "For Client Credentials: configure application permissions for the target API, obtain required admin consent, and request a token from /token using the client-credentials grant and the API's .default scope. No user redirect URI or authorization-code callback is used.",
+          "Store credentials securely (prefer a certificate or managed identity where appropriate), validate the token against the target API, and test only the permissions required."
+        ];
+        guide.requirements=[
+          "Microsoft Entra tenant and app-registration access",
+          "Target API and least-privilege permission model identified (delegated vs application)",
+          "Authorization Code only: exact redirect URI and user sign-in flow",
+          "Client Credentials only: application permissions, required admin consent, and secure client credential such as a certificate or secret"
+        ];
+        guide.blockers=[
+          "Mixing delegated permissions with app-only permissions",
+          "Tenant policy or admin-consent requirements",
+          "Authorization Code: redirect URI mismatch or incorrect account audience",
+          "Client Credentials: missing application permissions, admin consent, or valid client credential"
+        ];
+        guide.human=[
+          "Confirm the target Microsoft API and choose the correct flow",
+          "Coordinate admin consent for permissions that require it",
+          "Configure the selected flow and protect secrets/certificates",
+          "Test the minimum required permissions in a development tenant"
+        ];
+      }
+    }
     const all=await readGenerated();all.unshift(guide);await saveGenerated(all.slice(0,100));
     res.json({guide,researchPerformed:true});
   }catch(e){const message=String(e?.message||"Unknown research error");res.status(502).json({error:"Research could not be completed: "+message,details:"No guide was saved. Wait a moment and retry; if it continues, check the provider status and API quotas."});}
