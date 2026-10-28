@@ -116,6 +116,40 @@ app.post("/api/research",async(req,res)=>{
     const rankedSources=sources.map(source=>{let type=officialHostFor(source)?"likely_official":"third_party_or_unverified";if(type==="likely_official"&&/q&a|community|forum|answers/i.test(source.title||""))type="official_community";const labels={likely_official:"Likely official provider source; verify it supports the specific claim.",official_community:"Official community/Q&A; useful context, not primary technical documentation.",third_party_or_unverified:"Third-party or unverified source; use as context, not authoritative proof."};return {title:source.title||source.url,url:source.url,why:labels[type],sourceType:type};});
     const preferredSource=rankedSources.find(source=>source.sourceType==="likely_official")||rankedSources[0];
     const guide={...safeData,slug,name:safeData.name||appName,url:preferredSource?.url||safeData.url,sources:rankedSources,status:oauthSupport==="confirmed"?"AI-generated · verify before use":safeData.status,researchPerformed:true,rawEvidence:sources,oauthSupport,authMethods:Array.isArray(data.authMethods)?data.authMethods:[],oauthSupportEvidence:data.oauthSupportEvidence||"No specific evidence statement returned; inspect the linked source material."};
+    // Generalize dual-flow guidance to any provider whose evidence identifies both common OAuth flows.
+    // Provider-specific branches below may add details for a particular ecosystem.
+    {
+      const methods=guide.authMethods||[];
+      const hasAuthCode=methods.some(m=>/authorization code/i.test(String(m.method||"")));
+      const hasClientCredentials=methods.some(m=>/client credentials/i.test(String(m.method||"")));
+      if(hasAuthCode&&hasClientCredentials&&oauthSupport==="confirmed"){
+        guide.summary="The retrieved evidence identifies both user-delegated Authorization Code and app-only Client Credentials flows. Choose the flow based on whether a user must sign in and on the target API's permission model; do not combine their steps.";
+        guide.steps=[
+          "Identify the target API and decide whether the integration acts on behalf of a signed-in user or as the application itself.",
+          "Register/configure the application and select the supported account audience required by the provider.",
+          "For Authorization Code: configure the exact redirect/callback URI, request user-delegated scopes, send the user through the provider's authorization endpoint, handle the callback, and exchange the code for tokens.",
+          "For Client Credentials: configure application/service permissions, obtain required administrator approval, and request a token using the provider's client-credentials grant and the API's required application scope. This flow normally does not use a user redirect or authorization-code callback.",
+          "Store client credentials securely, request only the minimum required permissions, and test the chosen flow against the target API in a development environment."
+        ];
+        guide.requirements=[
+          "Provider app registration and access to the relevant developer/admin console",
+          "Target API and permission model identified (delegated user access vs app-only access)",
+          "Authorization Code only: callback URI and user sign-in flow",
+          "Client Credentials only: application/service permissions, any required admin approval, and secure client credentials"
+        ];
+        guide.blockers=[
+          "Choosing a flow that does not match the target API or user context",
+          "Confusing delegated scopes with application/service permissions",
+          "Authorization Code: callback mismatch or incorrect scopes",
+          "Client Credentials: missing app permissions, admin approval, or valid client credentials"
+        ];
+        guide.human=[
+          "Confirm the target API and choose the flow that matches the integration's user context",
+          "Complete provider-console configuration and any required administrator approval",
+          "Secure credentials and test the selected flow with least-privilege permissions"
+        ];
+      }
+    }
     // Make broad WhatsApp searches explicit about the difference between direct Cloud API
     // credentials and OAuth managed by a specific third-party connector.
     if(/whatsapp/i.test(appName)){
