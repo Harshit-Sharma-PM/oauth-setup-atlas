@@ -3,16 +3,31 @@ import{createRoot}from"react-dom/client";
 import{ArrowLeft,ArrowRight,BookOpen,Check,ChevronDown,Clock3,ExternalLink,FileText,Filter,Globe2,Link2,LoaderCircle,Search,ShieldCheck,Sparkles,TriangleAlert,Users,Workflow}from"lucide-react";
 import"./styles.css";
 const IconMark=({children})=><span className="icon-mark">{children}</span>;
+function guideUrl(g){
+ const compact={...g};delete compact.rawEvidence;
+ const encoded=btoa(encodeURIComponent(JSON.stringify(compact))).replace(/\\+/g,"-").replace(/\\//g,"_").replace(/=+$/,"");
+ return "/guide/"+encodeURIComponent(g.slug)+"#data="+encoded;
+}
+function guideFromHash(){
+ try{
+  const match=location.hash.match(/(?:^#|&)data=([A-Za-z0-9_-]+)/);
+  if(!match)return null;
+  const base64=match[1].replace(/-/g,"+").replace(/_/g,"/");
+  const json=decodeURIComponent(atob(base64));
+  const guide=JSON.parse(json);
+  return guide&&guide.slug?guide:null;
+ }catch{return null;}
+}
 function App(){
  const[guides,setGuides]=useState([]),[search,setSearch]=useState(""),[category,setCategory]=useState("All apps"),[selected,setSelected]=useState(null),[query,setQuery]=useState(""),[busy,setBusy]=useState(false),[error,setError]=useState(""),[toast,setToast]=useState(""),[health,setHealth]=useState({researchConfigured:false}),[done,setDone]=useState({});
  const refresh=()=>fetch("/api/guides").then(r=>r.json()).then(setGuides).catch(()=>setError("Could not load the guide library. Start the API server and refresh."));
- useEffect(()=>{refresh();fetch("/api/health").then(r=>r.json()).then(setHealth).catch(()=>{});const slug=location.pathname.split("/").filter(Boolean).pop();if(slug&&slug!=="guide")fetch("/api/guides/"+slug).then(r=>r.ok?r.json():null).then(g=>g&&setSelected(g)).catch(()=>{});},[]);
+ useEffect(()=>{refresh();fetch("/api/health").then(r=>r.json()).then(setHealth).catch(()=>{});const shared=guideFromHash();if(shared){setSelected(shared);return;}const slug=location.pathname.split("/").filter(Boolean).pop();if(slug&&slug!=="guide")fetch("/api/guides/"+slug).then(r=>r.ok?r.json():null).then(g=>g&&setSelected(g)).catch(()=>{});},[]);
  const categories=["All apps",...new Set(guides.map(g=>g.category||"Other"))];
  const filtered=useMemo(()=>guides.filter(g=>(category==="All apps"||g.category===category)&&[g.name,g.summary,g.category].join(" ").toLowerCase().includes(search.toLowerCase())),[guides,search,category]);
- const openGuide=g=>{setSelected(g);history.pushState({}, "", "/guide/"+g.slug);window.scrollTo({top:0,behavior:"smooth"});};
+ const openGuide=g=>{setSelected(g);history.pushState({}, "", guideUrl(g));window.scrollTo({top:0,behavior:"smooth"});};
  const home=()=>{setSelected(null);history.pushState({}, "", "/");};
- useEffect(()=>{const onPop=()=>{const slug=location.pathname.split("/").filter(Boolean).pop();if(!slug)setSelected(null);else fetch("/api/guides/"+slug).then(r=>r.ok?r.json():null).then(g=>setSelected(g));};window.addEventListener("popstate",onPop);return()=>window.removeEventListener("popstate",onPop);},[]);
- const research=async e=>{e?.preventDefault();if(!query.trim())return;setBusy(true);setError("");try{const r=await fetch("/api/research",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({app:query.trim()})});const d=await r.json();if(!r.ok)throw new Error(d.error||"Research failed");setSelected(d.guide);history.pushState({},"","/guide/"+d.guide.slug);setToast(d.researchPerformed?"Research complete. Review sources and unknowns before relying on this guide.":"Draft created without live research. Add API keys to investigate unfamiliar apps.");refresh();window.scrollTo({top:0,behavior:"smooth"});}catch(e){setError(e.message)}finally{setBusy(false)}};
+ useEffect(()=>{const onPop=()=>{const shared=guideFromHash();if(shared){setSelected(shared);return;}const slug=location.pathname.split("/").filter(Boolean).pop();if(!slug)setSelected(null);else fetch("/api/guides/"+slug).then(r=>r.ok?r.json():null).then(g=>setSelected(g));};window.addEventListener("popstate",onPop);return()=>window.removeEventListener("popstate",onPop);},[]);
+ const research=async e=>{e?.preventDefault();if(!query.trim())return;setBusy(true);setError("");try{const r=await fetch("/api/research",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({app:query.trim()})});const d=await r.json();if(!r.ok)throw new Error(d.error||"Research failed");setSelected(d.guide);history.pushState({},"",guideUrl(d.guide));setToast(d.researchPerformed?"Research complete. Review sources and unknowns before relying on this guide.":"Draft created without live research. Add API keys to investigate unfamiliar apps.");refresh();window.scrollTo({top:0,behavior:"smooth"});}catch(e){setError(e.message)}finally{setBusy(false)}};
  const copy=async()=>{await navigator.clipboard?.writeText(location.href);setToast("Guide link copied.");setTimeout(()=>setToast(""),2500)};
  const completed=selected?(done[selected.slug]||[]):[];
  const toggle=(i)=>setDone(p=>({...p,[selected.slug]:completed.includes(i)?completed.filter(x=>x!==i):[...completed,i]}));
